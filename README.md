@@ -4,7 +4,7 @@ Made-to-order healthcare workwear for Nigerian HCPs. Two portals, one design
 system — built from the **ZEON UI/UX Design Specification v1.0**.
 
 **Stack:** Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 ·
-JSON file store via API routes (swap for Postgres in production).
+Supabase (Postgres) via API routes + server components.
 
 ## The two portals
 
@@ -37,6 +37,22 @@ event hooks (`order_confirmed`, `quote_viewed`, `deposit_paid`,
 
 ## Getting started
 
+**1. Database (Supabase).** Create a project at
+[https://supabase.com](https://supabase.com) (free tier is fine to start),
+open **SQL Editor → New query**, paste the whole `supabase/schema.sql` and
+run it. That creates every table and seeds the product catalogue.
+
+**2. Environment variables.** Copy `.env.local.example` to `.env.local` and
+fill in the values from your Supabase project **Settings → API**:
+
+| Variable | Where to find it |
+|---|---|
+| `SUPABASE_URL` | Settings → API → Project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Settings → API → service_role (secret) — **server-only, never make it `NEXT_PUBLIC_`** |
+| `ZEON_SESSION_SECRET` | any long random string, e.g. `openssl rand -base64 32` |
+
+**3. Run it.**
+
 ```bash
 npm install
 npm run dev      # http://localhost:3000
@@ -44,8 +60,12 @@ npm run build
 npm start
 ```
 
+> `npm run build` queries Supabase to prerender the landing page, so the
+> env vars must be present at build time too (Vercel injects them
+> automatically).
+
 Create a coordinator account at `/coordinator/setup`, or sign in with the
-seeded demo coordinator:
+seeded demo coordinator (created automatically on first use):
 
 | Email | Password |
 |---|---|
@@ -69,16 +89,22 @@ app/
                            # feedback, events, auth, products
 components/                # design-system kit (ui.tsx), tracker, swatches,
                            # placement picker, dropzone, invite card, recorder
-lib/                       # types, JSON db, pricing tiers, sizing data,
+lib/                       # types, Supabase db, pricing tiers, sizing data,
                            # sessions, autosave, order status
-data/                      # products.json (seeded catalogue)
+supabase/                  # schema.sql — tables + catalogue seed
 public/images/             # style photography + banners
 ```
 
 ## Production notes
 
-- Replace `lib/db.ts` with a real database (serverless filesystems are
-  read-only); set `ZEON_SESSION_SECRET`.
+- Persistence is Supabase Postgres — deploy just needs the three environment
+  variables (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+  `ZEON_SESSION_SECRET`) set in Vercel. Run `supabase/schema.sql` in the
+  Supabase SQL Editor before the first deploy. The service-role key is only
+  ever used server-side (guarded by `server-only` in `lib/supabase.ts`).
+- The landing page is prerendered at build time, so after editing catalogue
+  data in Supabase, trigger a re-deploy (or a `git commit` on Vercel) to pick
+  up the changes on the home page; all other pages read live from the DB.
 - Integrate Paystack/Flutterwave for live payments; add Resend/SMTP for
   transactional email; upload logos to object storage (S3/R2).
 - Open spec questions (§12) stubbed with sensible defaults: full payment
