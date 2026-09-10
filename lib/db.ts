@@ -1,6 +1,6 @@
-import { promises as fs } from "fs";
-import path from "path";
 import crypto from "crypto";
+import type { PostgrestError } from "@supabase/supabase-js";
+import { supabase } from "./supabase";
 import type {
   AppEvent,
   Collection,
@@ -17,28 +17,28 @@ import type {
   User,
 } from "./types";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-
-async function readJson<T>(file: string, fallback: T): Promise<T> {
-  try {
-    const raw = await fs.readFile(path.join(DATA_DIR, file), "utf8");
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-async function writeJson(file: string, data: unknown): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(
-    path.join(DATA_DIR, file),
-    JSON.stringify(data, null, 2),
-    "utf8"
-  );
-}
+/* ------------------------------ infrastructure -----------------------------
+ *
+ * Storage migrated from local JSON files (read-only serverless filesystems)
+ * to Supabase Postgres. The schema lives in supabase/schema.sql — columns
+ * intentionally use the same camelCase names as the TypeScript types in
+ * lib/types.ts, so rows round-trip with no field mapping.
+ *
+ * Conventions kept from the file-based version:
+ *  - emails are stored + compared lowercase
+ *  - order codes are stored as generated and compared uppercase
+ *  - size-profile identity is stored + compared lowercase
+ */
 
 function uid(prefix = ""): string {
   return prefix + crypto.randomUUID().slice(0, 8).toUpperCase();
+}
+
+function fail(error: PostgrestError | null, fallback: string): void {
+  if (error) {
+    console.error("[supabase]", fallback, error.code, error.message);
+    throw new Error(error.message || fallback);
+  }
 }
 
 /* ---------------------------------- seeds --------------------------------- */
@@ -47,14 +47,22 @@ const ADMIN_EMAIL = "admin@zeonapparel.com";
 const ADMIN_PASSWORD = "ZeonAdmin123!";
 
 async function ensureSeeded() {
-  const users = await readJson<User[]>("users.json", []);
-  if (!users.some((u) => u.email.toLowerCase() === ADMIN_EMAIL)) {
-    const salt = crypto.randomBytes(16).toString("hex");
-    const passwordHash = crypto
-      .createHash("sha256")
-      .update(salt + ADMIN_PASSWORD)
-      .digest("hex");
-    users.push({
+  const s = supabase();
+  const { data: existing } = await s
+    .from("users")
+    .select("id")
+    .eq("email", ADMIN_EMAIL)
+    .maybeSingle();
+  if (existing) return;
+
+  const salt = crypto.randomBytes(16).toString("hex");
+  const passwordHash = crypto
+    .createHash("sha256")
+    .update(salt + ADMIN_PASSWORD)
+    .digest("hex");
+  // on-conflict → DO NOTHING, so concurrent first-requests stay safe.
+  await s.from("users").upsert(
+    {
       id: crypto.randomUUID(),
       name: "Zeon Store Admin",
       email: ADMIN_EMAIL,
@@ -64,28 +72,39 @@ async function ensureSeeded() {
       phone: "+234 801 234 5678",
       address: "14 Ogudu Road, Ikeja",
       city: "Lagos",
-      createdAt: new Date().toISOString(),
-    });
-    await writeJson("users.json", users);
-  }
+    },
+    { onConflict: "email", ignoreDuplicates: true }
+  );
 }
 
 /* --------------------------------- products -------------------------------- */
 
 export async function getProducts(): Promise<Product[]> {
-  return readJson<Product[]>("products.json", []);
+  const { data } = await supabase()
+    .from("products")
+    .select("*")
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as Product[];
 }
 
 export async function getProductBySlug(
   slug: string
 ): Promise<Product | undefined> {
-  const products = await getProducts();
-  return products.find((p) => p.slug === slug);
+  const { data } = await supabase()
+    .from("products")
+    .select("*")
+    .eq("slug", slug)
+    .maybeSingle();
+  return (data ?? undefined) as Product | undefined;
 }
 
 export async function getProductById(id: string): Promise<Product | undefined> {
-  const products = await getProducts();
-  return products.find((p) => p.id === id);
+  const { data } = await supabase()
+    .from("products")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  return (data ?? undefined) as Product | undefined;
 }
 
 export async function saveProduct(
@@ -93,56 +112,64 @@ export async function saveProduct(
     id?: string;
   }
 ): Promise<Product> {
-  const products = await getProducts();
+  const s = supabase();
   if (input.id) {
-    const idx = products.findIndex((p) => p.id === input.id);
-    if (idx === -1) throw new Error("Product not found");
-    products[idx] = {
-      ...products[idx],
-      ...input,
-      id: products[idx].id,
-      createdAt: products[idx].createdAt,
-    };
-    await writeJson("products.json", products);
-    return products[idx];
+    const { id, ...patch } = input;
+    const { data, error } = await s
+      .from("products")
+      .update(patch)
+      .eq("id", id)
+      .select()
+      .maybeSingle();
+    if (error) fail(error, "Failed to update product");
+    if (!data) throw new Error("Product not found");
+    return data as Product;
   }
-  const product: Product = {
-    ...input,
-    id: crypto.randomUUID(),
-    rating: 5,
-    reviewCount: 0,
-    createdAt: new Date().toISOString(),
-  };
-  products.unshift(product);
-  await writeJson("products.json", products);
-  return product;
+  const { data, error } = await s
+    .from("products")
+    .insert({
+      ...input,
+      id: crypto.randomUUID(),
+      rating: 5,
+      reviewCount: 0,
+    })
+    .select()
+    .single();
+  fail(error, "Failed to create product");
+  return data as Product;
 }
 
 export async function deleteProduct(id: string): Promise<void> {
-  const products = await getProducts();
-  await writeJson(
-    "products.json",
-    products.filter((p) => p.id !== id)
-  );
+  const { error } = await supabase().from("products").delete().eq("id", id);
+  fail(error, "Failed to delete product");
 }
 
 /* ---------------------------------- users ---------------------------------- */
 
 export async function getUsers(): Promise<User[]> {
   await ensureSeeded();
-  return readJson<User[]>("users.json", []);
+  const { data } = await supabase().from("users").select("*");
+  return (data ?? []) as User[];
 }
 
 export async function getUserByEmail(
   email: string
 ): Promise<User | undefined> {
-  const users = await getUsers();
-  return users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+  const { data } = await supabase()
+    .from("users")
+    .select("*")
+    .eq("email", email.toLowerCase())
+    .maybeSingle();
+  return (data ?? undefined) as User | undefined;
 }
 
 export async function getUserById(id: string): Promise<User | undefined> {
-  const users = await getUsers();
-  return users.find((u) => u.id === id);
+  const { data } = await supabase()
+    .from("users")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  return (data ?? undefined) as User | undefined;
 }
 
 export async function createUser(input: {
@@ -153,32 +180,33 @@ export async function createUser(input: {
   orgName?: string;
   orgType?: string;
 }): Promise<User> {
-  const users = await getUsers();
-  if (
-    users.some((u) => u.email.toLowerCase() === input.email.toLowerCase())
-  ) {
-    throw new Error("An account with this email already exists.");
-  }
+  const s = supabase();
+  const email = input.email.toLowerCase();
   const salt = crypto.randomBytes(16).toString("hex");
   const passwordHash = crypto
     .createHash("sha256")
     .update(salt + input.password)
     .digest("hex");
-  const user: User = {
-    id: crypto.randomUUID(),
-    name: input.name,
-    email: input.email,
-    passwordHash,
-    salt,
-    role: "coordinator",
-    phone: input.phone,
-    orgName: input.orgName,
-    orgType: input.orgType,
-    createdAt: new Date().toISOString(),
-  };
-  users.push(user);
-  await writeJson("users.json", users);
-  return user;
+  const { data, error } = await s
+    .from("users")
+    .insert({
+      id: crypto.randomUUID(),
+      name: input.name,
+      email,
+      passwordHash,
+      salt,
+      role: "coordinator",
+      phone: input.phone,
+      orgName: input.orgName,
+      orgType: input.orgType,
+    })
+    .select()
+    .single();
+  if (error) {
+    // unique constraint on email (or a race with the check below)
+    throw new Error("An account with this email already exists.");
+  }
+  return data as User;
 }
 
 export async function updateUser(
@@ -187,12 +215,15 @@ export async function updateUser(
     Pick<User, "name" | "phone" | "address" | "city" | "orgName" | "orgType">
   >
 ): Promise<User> {
-  const users = await getUsers();
-  const idx = users.findIndex((u) => u.id === id);
-  if (idx === -1) throw new Error("User not found");
-  users[idx] = { ...users[idx], ...patch };
-  await writeJson("users.json", users);
-  return users[idx];
+  const { data, error } = await supabase()
+    .from("users")
+    .update(patch)
+    .eq("id", id)
+    .select()
+    .maybeSingle();
+  if (error) fail(error, "Failed to update user");
+  if (!data) throw new Error("User not found");
+  return data as User;
 }
 
 export function verifyPassword(
@@ -209,58 +240,85 @@ export function verifyPassword(
 /* ---------------------------------- orders --------------------------------- */
 
 export async function getOrders(): Promise<Order[]> {
-  return readJson<Order[]>("orders.json", []);
+  const { data } = await supabase()
+    .from("orders")
+    .select("*")
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as Order[];
 }
 
 export async function getOrderByCode(
   code: string
 ): Promise<Order | undefined> {
-  const orders = await getOrders();
-  return orders.find((o) => o.code.toLowerCase() === code.toLowerCase());
+  const { data } = await supabase()
+    .from("orders")
+    .select("*")
+    .eq("code", code.trim().toUpperCase())
+    .maybeSingle();
+  return (data ?? undefined) as Order | undefined;
 }
 
 export async function getOrdersByEmail(email: string): Promise<Order[]> {
-  const orders = await getOrders();
-  return orders
-    .filter((o) => o.email.toLowerCase() === email.toLowerCase())
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const { data } = await supabase()
+    .from("orders")
+    .select("*")
+    .eq("email", email.toLowerCase())
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as Order[];
 }
 
-function nextOrderCode(existing: Order[]): string {
+async function nextOrderCode(): Promise<string> {
   const year = new Date().getFullYear();
-  const seq = String(existing.length + 1).padStart(4, "0");
+  const { count } = await supabase()
+    .from("orders")
+    .select("id", { count: "exact", head: true });
+  const seq = String((count ?? 0) + 1).padStart(4, "0");
   return `ZN-${year}-${seq}-${uid()}`;
 }
 
 export async function createOrder(
   input: Omit<Order, "id" | "code" | "status" | "timeline" | "createdAt">
 ): Promise<Order> {
-  const orders = await getOrders();
+  const s = supabase();
   const now = new Date().toISOString();
   const order: Order = {
     ...input,
+    email: input.email.toLowerCase(),
     id: crypto.randomUUID(),
-    code: nextOrderCode(orders),
+    code: await nextOrderCode(),
     status: "pending",
     timeline: [{ status: "Order placed", at: now }],
     createdAt: now,
   };
-  orders.unshift(order);
-  await writeJson("orders.json", orders);
+  const { data, error } = await s
+    .from("orders")
+    .insert(order)
+    .select()
+    .single();
+  fail(error, "Failed to create order");
 
   // decrement stock
-  const products = await getProducts();
-  let changed = false;
-  for (const item of order.items) {
-    const p = products.find((x) => x.id === item.productId);
-    if (p) {
-      p.stock = Math.max(0, p.stock - item.qty);
-      changed = true;
-    }
+  const ids = [...new Set(order.items.map((i) => i.productId))];
+  if (ids.length) {
+    const { data: prods } = await s
+      .from("products")
+      .select("id, stock")
+      .in("id", ids);
+    const products = (prods ?? []) as Array<{ id: string; stock: number }>;
+    await Promise.all(
+      products.map((p) => {
+        const qty = order.items
+          .filter((i) => i.productId === p.id)
+          .reduce((n, i) => n + i.qty, 0);
+        return s
+          .from("products")
+          .update({ stock: Math.max(0, (p.stock ?? 0) - qty) })
+          .eq("id", p.id);
+      })
+    );
   }
-  if (changed) await writeJson("products.json", products);
 
-  return order;
+  return data as Order;
 }
 
 export async function updateOrderStatus(
@@ -268,32 +326,51 @@ export async function updateOrderStatus(
   status: Order["status"],
   note?: string
 ): Promise<Order> {
-  const orders = await getOrders();
-  const idx = orders.findIndex((o) => o.id === id);
-  if (idx === -1) throw new Error("Order not found");
-  orders[idx].status = status;
-  orders[idx].timeline.push({
+  const s = supabase();
+  const { data, error } = await s
+    .from("orders")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) fail(error, "Failed to read order");
+  const order = data as Order | null;
+  if (!order) throw new Error("Order not found");
+  order.status = status;
+  order.timeline.push({
     status: status.charAt(0).toUpperCase() + status.slice(1),
     at: new Date().toISOString(),
     note,
   });
-  await writeJson("orders.json", orders);
-  return orders[idx];
+  const { data: updated, error: upErr } = await s
+    .from("orders")
+    .update({ status: order.status, timeline: order.timeline })
+    .eq("id", id)
+    .select()
+    .single();
+  fail(upErr, "Failed to update order status");
+  return updated as Order;
 }
 
 /* --------------------------------- reviews --------------------------------- */
 
 export async function getReviews(): Promise<Review[]> {
-  return readJson<Review[]>("reviews.json", []);
+  const { data } = await supabase()
+    .from("reviews")
+    .select("*")
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as Review[];
 }
 
 export async function getApprovedReviewsForProduct(
   productId: string
 ): Promise<Review[]> {
-  const reviews = await getReviews();
-  return reviews
-    .filter((r) => r.productId === productId && r.status === "approved")
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const { data } = await supabase()
+    .from("reviews")
+    .select("*")
+    .eq("productId", productId)
+    .eq("status", "approved")
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as Review[];
 }
 
 export async function createReview(input: {
@@ -303,111 +380,142 @@ export async function createReview(input: {
   title?: string;
   body: string;
 }): Promise<Review> {
-  const reviews = await getReviews();
-  const review: Review = {
-    ...input,
-    id: crypto.randomUUID(),
-    status: "pending",
-    createdAt: new Date().toISOString(),
-  };
-  reviews.unshift(review);
-  await writeJson("reviews.json", reviews);
+  const { data, error } = await supabase()
+    .from("reviews")
+    .insert({
+      ...input,
+      id: crypto.randomUUID(),
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    })
+    .select()
+    .single();
+  fail(error, "Failed to create review");
   await refreshProductRating(input.productId);
-  return review;
+  return data as Review;
 }
 
 export async function moderateReview(
   id: string,
   action: "approve" | "delete"
 ): Promise<void> {
-  const reviews = await getReviews();
-  const review = reviews.find((r) => r.id === id);
+  const s = supabase();
+  const { data, error } = await s
+    .from("reviews")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) fail(error, "Failed to read review");
+  const review = data as Review | null;
   if (!review) throw new Error("Review not found");
   if (action === "delete") {
-    await writeJson(
-      "reviews.json",
-      reviews.filter((r) => r.id !== id)
-    );
+    await s.from("reviews").delete().eq("id", id);
   } else {
-    review.status = "approved";
-    await writeJson("reviews.json", reviews);
+    await s.from("reviews").update({ status: "approved" }).eq("id", id);
   }
   await refreshProductRating(review.productId);
 }
 
 async function refreshProductRating(productId: string) {
-  const reviews = await getReviews();
-  const approved = reviews.filter(
-    (r) => r.productId === productId && r.status === "approved"
-  );
-  const products = await getProducts();
-  const idx = products.findIndex((p) => p.id === productId);
-  if (idx === -1) return;
+  const s = supabase();
+  const { data: product } = await s
+    .from("products")
+    .select("id")
+    .eq("id", productId)
+    .maybeSingle();
+  if (!product) return;
+
+  const { data: approvedRaw } = await s
+    .from("reviews")
+    .select("rating")
+    .eq("productId", productId)
+    .eq("status", "approved");
+  const approved = (approvedRaw ?? []) as Array<{ rating: number }>;
+
   if (approved.length === 0) {
-    products[idx].reviewCount = 0;
+    await s.from("products").update({ reviewCount: 0 }).eq("id", productId);
   } else {
-    products[idx].reviewCount = approved.length;
-    products[idx].rating =
-      Math.round(
-        (approved.reduce((s, r) => s + r.rating, 0) / approved.length) * 10
-      ) / 10;
+    const avg =
+      approved.reduce((sum, r) => sum + r.rating, 0) / approved.length;
+    await s
+      .from("products")
+      .update({ reviewCount: approved.length, rating: Math.round(avg * 10) / 10 })
+      .eq("id", productId);
   }
-  await writeJson("products.json", products);
 }
 
 /* --------------------------------- enquiries -------------------------------- */
 
 export async function getEnquiries(): Promise<Enquiry[]> {
-  return readJson<Enquiry[]>("enquiries.json", []);
+  const { data } = await supabase()
+    .from("enquiries")
+    .select("*")
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as Enquiry[];
 }
 
 export async function createEnquiry(
   input: Omit<Enquiry, "id" | "status" | "createdAt">
 ): Promise<Enquiry> {
-  const enquiries = await getEnquiries();
-  const enquiry: Enquiry = {
-    ...input,
-    id: crypto.randomUUID(),
-    status: "new",
-    createdAt: new Date().toISOString(),
-  };
-  enquiries.unshift(enquiry);
-  await writeJson("enquiries.json", enquiries);
-  return enquiry;
+  const { data, error } = await supabase()
+    .from("enquiries")
+    .insert({
+      ...input,
+      id: crypto.randomUUID(),
+      status: "new",
+      createdAt: new Date().toISOString(),
+    })
+    .select()
+    .single();
+  fail(error, "Failed to create enquiry");
+  return data as Enquiry;
 }
 
 export async function updateEnquiryStatus(
   id: string,
   status: Enquiry["status"]
 ): Promise<Enquiry> {
-  const enquiries = await getEnquiries();
-  const idx = enquiries.findIndex((e) => e.id === id);
-  if (idx === -1) throw new Error("Enquiry not found");
-  enquiries[idx].status = status;
-  await writeJson("enquiries.json", enquiries);
-  return enquiries[idx];
+  const { data, error } = await supabase()
+    .from("enquiries")
+    .update({ status })
+    .eq("id", id)
+    .select()
+    .maybeSingle();
+  if (error) fail(error, "Failed to update enquiry");
+  if (!data) throw new Error("Enquiry not found");
+  return data as Enquiry;
 }
 
 /* -------------------------------- collections ------------------------------ */
 
 export async function getCollections(): Promise<Collection[]> {
-  return readJson<Collection[]>("collections.json", []);
+  const { data } = await supabase()
+    .from("collections")
+    .select("*")
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as Collection[];
 }
 
 export async function getCollectionsByCoordinator(
   coordinatorId: string
 ): Promise<Collection[]> {
-  const all = await getCollections();
-  return all
-    .filter((c) => c.coordinatorId === coordinatorId)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const { data } = await supabase()
+    .from("collections")
+    .select("*")
+    .eq("coordinatorId", coordinatorId)
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as Collection[];
 }
 
 export async function getCollectionById(
   id: string
 ): Promise<Collection | undefined> {
-  const all = await getCollections();
-  return all.find((c) => c.id === id);
+  const { data } = await supabase()
+    .from("collections")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  return (data ?? undefined) as Collection | undefined;
 }
 
 export async function saveCollection(
@@ -416,94 +524,120 @@ export async function saveCollection(
     note?: string;
   }
 ): Promise<Collection> {
-  const all = await getCollections();
+  const s = supabase();
   if (input.id) {
-    const idx = all.findIndex((c) => c.id === input.id);
-    if (idx === -1) throw new Error("Collection not found");
-    const current = all[idx];
+    const { id, note, ...patch } = input;
+    const { data, error } = await s
+      .from("collections")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) fail(error, "Failed to read collection");
+    const current = data as Collection | null;
+    if (!current) throw new Error("Collection not found");
     const bumped =
       input.status === "for-production" && current.status !== "for-production";
     const version = bumped ? current.version + 1 : current.version;
-    all[idx] = {
-      ...current,
-      ...input,
-      id: current.id,
-      createdAt: current.createdAt,
-      version,
-      history: bumped
-        ? [
-            ...current.history,
-            {
-              version,
-              at: new Date().toISOString(),
-              note: input.note || "Marked as For Production",
-            },
-          ]
-        : current.history,
-    };
-    await writeJson("collections.json", all);
-    return all[idx];
+    const history = bumped
+      ? [
+          ...current.history,
+          {
+            version,
+            at: new Date().toISOString(),
+            note: note || "Marked as For Production",
+          },
+        ]
+      : current.history;
+    const { data: updated, error: upErr } = await s
+      .from("collections")
+      .update({ ...patch, version, history })
+      .eq("id", id)
+      .select()
+      .single();
+    fail(upErr, "Failed to save collection");
+    return updated as Collection;
   }
   const now = new Date().toISOString();
-  const collection: Collection = {
-    ...input,
-    id: crypto.randomUUID(),
-    version: 1,
-    history: [{ version: 1, at: now, note: "Collection created" }],
-    createdAt: now,
-  };
-  all.unshift(collection);
-  await writeJson("collections.json", all);
-  return collection;
+  const { note, ...rest } = input;
+  const { data, error } = await s
+    .from("collections")
+    .insert({
+      ...rest,
+      id: crypto.randomUUID(),
+      version: 1,
+      history: [{ version: 1, at: now, note: "Collection created" }],
+    })
+    .select()
+    .single();
+  fail(error, "Failed to create collection");
+  return data as Collection;
 }
 
 export async function deleteCollection(id: string): Promise<void> {
-  const all = await getCollections();
-  await writeJson(
-    "collections.json",
-    all.filter((c) => c.id !== id)
-  );
+  const { error } = await supabase().from("collections").delete().eq("id", id);
+  fail(error, "Failed to delete collection");
 }
 
 /* -------------------------------- team orders ------------------------------ */
 
 export async function getTeamOrders(): Promise<TeamOrder[]> {
-  return readJson<TeamOrder[]>("team-orders.json", []);
+  const { data } = await supabase()
+    .from("team_orders")
+    .select("*")
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as TeamOrder[];
 }
 
 export async function getTeamOrdersByCoordinator(
   coordinatorId: string
 ): Promise<TeamOrder[]> {
-  const all = await getTeamOrders();
-  return all
-    .filter((o) => o.coordinatorId === coordinatorId)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const { data } = await supabase()
+    .from("team_orders")
+    .select("*")
+    .eq("coordinatorId", coordinatorId)
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as TeamOrder[];
 }
 
 export async function getTeamOrderById(
   id: string
 ): Promise<TeamOrder | undefined> {
-  const all = await getTeamOrders();
-  return all.find((o) => o.id === id);
+  const { data } = await supabase()
+    .from("team_orders")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  return (data ?? undefined) as TeamOrder | undefined;
 }
 
 export async function getTeamOrderByInviteToken(
   token: string
 ): Promise<TeamOrder | undefined> {
-  const all = await getTeamOrders();
-  return all.find((o) => o.inviteToken === token);
+  const { data } = await supabase()
+    .from("team_orders")
+    .select("*")
+    .eq("inviteToken", token)
+    .maybeSingle();
+  return (data ?? undefined) as TeamOrder | undefined;
 }
 
 export async function getTeamOrderByCode(
   code: string
 ): Promise<TeamOrder | undefined> {
-  const all = await getTeamOrders();
-  return all.find((o) => o.code.toLowerCase() === code.toLowerCase());
+  const { data } = await supabase()
+    .from("team_orders")
+    .select("*")
+    .eq("code", code.trim().toUpperCase())
+    .maybeSingle();
+  return (data ?? undefined) as TeamOrder | undefined;
 }
 
-function nextTeamCode(existing: TeamOrder[]): string {
+async function nextTeamCode(): Promise<string> {
   const year = new Date().getFullYear();
-  return `ZNT-${year}-${String(existing.length + 1).padStart(3, "0")}`;
+  const { count } = await supabase()
+    .from("team_orders")
+    .select("id", { count: "exact", head: true });
+  return `ZNT-${year}-${String((count ?? 0) + 1).padStart(3, "0")}`;
 }
 
 export function makeInviteToken(): string {
@@ -536,36 +670,31 @@ export async function createTeamOrder(
     perSet?: number;
   }
 ): Promise<TeamOrder> {
-  const all = await getTeamOrders();
+  const { roster, inviteDays, perSet, ...rest } = input;
   const now = new Date().toISOString();
   const expiry = new Date();
-  expiry.setDate(expiry.getDate() + (input.inviteDays ?? 14));
+  expiry.setDate(expiry.getDate() + (inviteDays ?? 14));
+  const per = perSet ?? 32000;
   const order: TeamOrder = {
+    ...rest,
     id: crypto.randomUUID(),
-    code: nextTeamCode(all),
+    code: await nextTeamCode(),
     productIds: [],
-    collectionId: input.collectionId,
-    coordinatorId: input.coordinatorId,
-    orgName: input.orgName,
-    headcount: input.headcount,
-    departments: input.departments,
-    type: input.type,
     inviteToken: makeInviteToken(),
     inviteExpiry: expiry.toISOString(),
-    roster: input.roster ?? [],
+    roster: roster ?? [],
     quote: {
-      perSet: input.perSet ?? 32000,
-      sets: input.headcount,
-      subtotal: (input.perSet ?? 32000) * input.headcount,
+      perSet: per,
+      sets: rest.headcount,
+      subtotal: per * rest.headcount,
       discount: 0,
-      total: (input.perSet ?? 32000) * input.headcount,
+      total: per * rest.headcount,
       depositDue: 0,
       balance: 0,
       status: "pending",
     },
     depositPaid: false,
     balancePaid: false,
-    embroidery: input.embroidery,
     production: {
       stage: -1,
       timestamps: [null, null, null, null, null, null, null, null],
@@ -574,25 +703,39 @@ export async function createTeamOrder(
     status: "draft",
     createdAt: now,
   };
-  all.unshift(order);
-  await writeJson("team-orders.json", all);
-  return order;
+  const { data, error } = await supabase()
+    .from("team_orders")
+    .insert(order)
+    .select()
+    .single();
+  fail(error, "Failed to create team order");
+  return data as TeamOrder;
 }
 
 export async function saveTeamOrder(order: TeamOrder): Promise<TeamOrder> {
-  const all = await getTeamOrders();
-  const idx = all.findIndex((o) => o.id === order.id);
-  if (idx === -1) throw new Error("Order not found");
-  all[idx] = order;
-  await writeJson("team-orders.json", all);
-  return order;
+  const { data, error } = await supabase()
+    .from("team_orders")
+    .update(order)
+    .eq("id", order.id)
+    .select()
+    .maybeSingle();
+  if (error) fail(error, "Failed to save team order");
+  if (!data) throw new Error("Order not found");
+  return data as TeamOrder;
 }
 
 export async function submitIntake(
   token: string,
   entry: Omit<RosterEntry, "id" | "submitted" | "submittedAt" | "source">
 ): Promise<{ order: TeamOrder; entry: RosterEntry; duplicate: boolean }> {
-  const order = await getTeamOrderByInviteToken(token);
+  const s = supabase();
+  const { data, error } = await s
+    .from("team_orders")
+    .select("*")
+    .eq("inviteToken", token)
+    .maybeSingle();
+  if (error) fail(error, "Failed to read team order");
+  const order = data as TeamOrder | null;
   if (!order) throw new Error("Invite link not found.");
   if (new Date(order.inviteExpiry).getTime() <= Date.now())
     throw new Error("This invite link has expired.");
@@ -608,7 +751,7 @@ export async function submitIntake(
     submittedAt: new Date().toISOString(),
     source: "invite",
   };
-  order.roster.push(full);
+  order.roster = [...order.roster, full];
   if (
     order.status === "awaiting-submissions" &&
     order.roster.filter((r) => r.submitted).length >= order.headcount
@@ -622,105 +765,153 @@ export async function submitIntake(
 /* ---------------------------- individual orders ---------------------------- */
 
 export async function getIndividualOrders(): Promise<IndividualOrder[]> {
-  return readJson<IndividualOrder[]>("individual-orders.json", []);
+  const { data } = await supabase()
+    .from("individual_orders")
+    .select("*")
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as IndividualOrder[];
 }
 
 export async function getIndividualOrderByCode(
   code: string
 ): Promise<IndividualOrder | undefined> {
-  const all = await getIndividualOrders();
-  return all.find((o) => o.code.toLowerCase() === code.toLowerCase());
+  const { data } = await supabase()
+    .from("individual_orders")
+    .select("*")
+    .eq("code", code.trim().toUpperCase())
+    .maybeSingle();
+  return (data ?? undefined) as IndividualOrder | undefined;
 }
 
 export async function getIndividualOrdersByEmail(
   email: string
 ): Promise<IndividualOrder[]> {
-  const all = await getIndividualOrders();
-  return all
-    .filter((o) => o.email.toLowerCase() === email.toLowerCase())
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const { data } = await supabase()
+    .from("individual_orders")
+    .select("*")
+    .eq("email", email.toLowerCase())
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as IndividualOrder[];
 }
 
 export async function createIndividualOrder(
   input: Omit<IndividualOrder, "id" | "code" | "productId" | "createdAt">
 ): Promise<IndividualOrder> {
-  const all = await getIndividualOrders();
+  const s = supabase();
   const year = new Date().getFullYear();
+  const { count } = await s
+    .from("individual_orders")
+    .select("id", { count: "exact", head: true });
   const order: IndividualOrder = {
     ...input,
+    email: input.email.toLowerCase(),
     id: crypto.randomUUID(),
-    code: `ZND-${year}-${String(all.length + 1).padStart(3, "0")}-${crypto.randomBytes(2).toString("hex").toUpperCase()}`,
+    code: `ZND-${year}-${String((count ?? 0) + 1).padStart(3, "0")}-${crypto
+      .randomBytes(2)
+      .toString("hex")
+      .toUpperCase()}`,
     productId: makeProductId("D"),
     createdAt: new Date().toISOString(),
   };
-  all.unshift(order);
-  await writeJson("individual-orders.json", all);
-  return order;
+  const { data, error } = await s
+    .from("individual_orders")
+    .insert(order)
+    .select()
+    .single();
+  fail(error, "Failed to create individual order");
+  return data as IndividualOrder;
 }
 
 export async function saveIndividualOrder(
   order: IndividualOrder
 ): Promise<IndividualOrder> {
-  const all = await getIndividualOrders();
-  const idx = all.findIndex((o) => o.id === order.id);
-  if (idx === -1) throw new Error("Order not found");
-  all[idx] = order;
-  await writeJson("individual-orders.json", all);
-  return order;
+  const { data, error } = await supabase()
+    .from("individual_orders")
+    .update(order)
+    .eq("id", order.id)
+    .select()
+    .maybeSingle();
+  if (error) fail(error, "Failed to save individual order");
+  if (!data) throw new Error("Order not found");
+  return data as IndividualOrder;
 }
 
 /* ------------------------------- size profiles ----------------------------- */
 
 export async function getSizeProfiles(): Promise<SizeProfile[]> {
-  return readJson<SizeProfile[]>("size-profiles.json", []);
+  const { data } = await supabase().from("size_profiles").select("*");
+  return (data ?? []) as SizeProfile[];
 }
 
 export async function getSizeProfile(
   identity: string
 ): Promise<SizeProfile | undefined> {
-  const all = await getSizeProfiles();
-  return all.find((p) => p.identity.toLowerCase() === identity.toLowerCase());
+  const { data } = await supabase()
+    .from("size_profiles")
+    .select("*")
+    .eq("identity", identity.toLowerCase())
+    .maybeSingle();
+  return (data ?? undefined) as SizeProfile | undefined;
 }
 
 export async function saveSizeProfile(
   input: Omit<SizeProfile, "id" | "updatedAt">
 ): Promise<SizeProfile> {
-  const all = await getSizeProfiles();
-  const idx = all.findIndex(
-    (p) => p.identity.toLowerCase() === input.identity.toLowerCase()
-  );
-  if (idx !== -1) {
-    all[idx] = { ...all[idx], ...input, updatedAt: new Date().toISOString() };
-    await writeJson("size-profiles.json", all);
-    return all[idx];
+  const s = supabase();
+  const identity = input.identity.toLowerCase();
+  const { data: existing } = await s
+    .from("size_profiles")
+    .select("id")
+    .eq("identity", identity)
+    .maybeSingle();
+  if (existing) {
+    const { data, error } = await s
+      .from("size_profiles")
+      .update({ ...input, identity, updatedAt: new Date().toISOString() })
+      .eq("id", existing.id)
+      .select()
+      .single();
+    fail(error, "Failed to save size profile");
+    return data as SizeProfile;
   }
-  const profile: SizeProfile = {
-    ...input,
-    id: crypto.randomUUID(),
-    updatedAt: new Date().toISOString(),
-  };
-  all.push(profile);
-  await writeJson("size-profiles.json", all);
-  return profile;
+  const { data, error } = await s
+    .from("size_profiles")
+    .insert({
+      ...input,
+      identity,
+      id: crypto.randomUUID(),
+      updatedAt: new Date().toISOString(),
+    })
+    .select()
+    .single();
+  fail(error, "Failed to create size profile");
+  return data as SizeProfile;
 }
 
 /* --------------------------------- discovery ------------------------------- */
 
 export async function getDiscoverySessions(): Promise<DiscoverySession[]> {
-  return readJson<DiscoverySession[]>("discovery.json", []);
+  const { data } = await supabase()
+    .from("discovery_sessions")
+    .select("*")
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as DiscoverySession[];
 }
 
 export async function getDiscoverySession(
   id: string
 ): Promise<DiscoverySession | undefined> {
-  const all = await getDiscoverySessions();
-  return all.find((s) => s.id === id);
+  const { data } = await supabase()
+    .from("discovery_sessions")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  return (data ?? undefined) as DiscoverySession | undefined;
 }
 
 export async function createDiscoverySession(
   input: Partial<DiscoverySession> & { mode: DiscoverySession["mode"] }
 ): Promise<DiscoverySession> {
-  const all = await getDiscoverySessions();
   const session: DiscoverySession = {
     id: crypto.randomUUID().slice(0, 8),
     mode: input.mode,
@@ -734,40 +925,53 @@ export async function createDiscoverySession(
     points: 0,
     createdAt: new Date().toISOString(),
   };
-  all.unshift(session);
-  await writeJson("discovery.json", all);
-  return session;
+  const { data, error } = await supabase()
+    .from("discovery_sessions")
+    .insert(session)
+    .select()
+    .single();
+  fail(error, "Failed to create discovery session");
+  return data as DiscoverySession;
 }
 
 export async function saveDiscoverySession(
   session: DiscoverySession
 ): Promise<DiscoverySession> {
-  const all = await getDiscoverySessions();
-  const idx = all.findIndex((s) => s.id === session.id);
-  if (idx === -1) throw new Error("Session not found");
-  all[idx] = session;
-  await writeJson("discovery.json", all);
-  return session;
+  const { data, error } = await supabase()
+    .from("discovery_sessions")
+    .update(session)
+    .eq("id", session.id)
+    .select()
+    .maybeSingle();
+  if (error) fail(error, "Failed to save discovery session");
+  if (!data) throw new Error("Session not found");
+  return data as DiscoverySession;
 }
 
 /* --------------------------------- feedback -------------------------------- */
 
 export async function getFeedback(): Promise<Feedback[]> {
-  return readJson<Feedback[]>("feedback.json", []);
+  const { data } = await supabase()
+    .from("feedback")
+    .select("*")
+    .order("createdAt", { ascending: false });
+  return (data ?? []) as Feedback[];
 }
 
 export async function createFeedback(
   input: Omit<Feedback, "id" | "createdAt">
 ): Promise<Feedback> {
-  const all = await getFeedback();
-  const fb: Feedback = {
-    ...input,
-    id: crypto.randomUUID(),
-    createdAt: new Date().toISOString(),
-  };
-  all.unshift(fb);
-  await writeJson("feedback.json", all);
-  return fb;
+  const { data, error } = await supabase()
+    .from("feedback")
+    .insert({
+      ...input,
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+    })
+    .select()
+    .single();
+  fail(error, "Failed to create feedback");
+  return data as Feedback;
 }
 
 /* ---------------------------------- events --------------------------------- */
@@ -776,7 +980,14 @@ export async function logEvent(
   name: string,
   props?: Record<string, string | number | boolean>
 ): Promise<void> {
-  const all = await readJson<AppEvent[]>("events.json", []);
-  all.push({ id: crypto.randomUUID(), name, props, at: new Date().toISOString() });
-  await writeJson("events.json", all.slice(-2000));
+  const { error } = await supabase()
+    .from("events")
+    .insert({
+      id: crypto.randomUUID(),
+      name,
+      props,
+      at: new Date().toISOString(),
+    });
+  // best-effort telemetry — never let an analytics write break a request
+  if (error) console.error("[supabase] logEvent failed", error.message);
 }
