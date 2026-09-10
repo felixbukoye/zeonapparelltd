@@ -2,6 +2,28 @@ export function formatNaira(amount: number): string {
   return "₦" + Math.round(amount).toLocaleString("en-NG");
 }
 
+export const WHATSAPP_NUMBER = "2348012345678";
+export const WHATSAPP_SALES = `https://wa.me/${WHATSAPP_NUMBER}`;
+
+export function timeLeft(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return "Expired";
+  const hours = Math.floor(ms / 3600000);
+  if (hours < 1) return `${Math.max(1, Math.floor(ms / 60000))}m left`;
+  if (hours < 48) return `${hours}h left`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h left`;
+}
+
+export function isExpiringSoon(iso: string): boolean {
+  const ms = new Date(iso).getTime() - Date.now();
+  return ms > 0 && ms < 48 * 3600000;
+}
+
+export function isExpired(iso: string): boolean {
+  return new Date(iso).getTime() <= Date.now();
+}
+
 export function formatDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString("en-NG", {

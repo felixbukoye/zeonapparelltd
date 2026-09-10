@@ -3,18 +3,19 @@
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useStore } from "@/context/StoreContext";
+import { useApp } from "@/context/AppContext";
+import { Button, Field, InlineBanner, inputCls } from "@/components/ui";
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { refreshUser } = useStore();
+  const { refreshUser } = useApp();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const next = searchParams.get("next") || "/account";
+  const next = searchParams.get("next") || "/coordinator";
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,67 +30,70 @@ function LoginForm() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Sign in failed.");
       await refreshUser();
-      router.push(data.user?.role === "admin" && next === "/account" ? "/admin" : next);
+      router.push(next);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign in failed.");
+      setError(
+        err instanceof Error
+          ? `${err.message} If you've forgotten your password, message us on WhatsApp and we'll sort it out.`
+          : "Sign in failed."
+      );
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="mx-auto max-w-md px-4 py-12 sm:py-16">
-      <div className="rounded-3xl border border-ink-100 bg-white p-7 shadow-xl shadow-ink-900/5 sm:p-9">
-        <h1 className="text-2xl font-black tracking-tight text-ink-900">
+    <div className="mx-auto max-w-md px-4 py-10 sm:py-14">
+      <div className="rounded-2xl border border-line bg-white p-6 shadow-xl shadow-navy-900/5 sm:p-8">
+        <p className="text-xs font-bold uppercase tracking-[0.18em] text-primary-600">
+          Coordinator sign in
+        </p>
+        <h1 className="mt-1 font-display text-2xl font-black tracking-tight text-navy-900">
           Welcome back
         </h1>
-        <p className="mt-1.5 text-sm text-ink-500">
-          Sign in to track orders and check out faster.
+        <p className="mt-1.5 text-sm text-mist-500">
+          Running a team order? Pick up right where you left off.
         </p>
         <form onSubmit={submit} className="mt-6 space-y-3.5">
-          <div>
-            <label className="mb-1 block text-xs font-bold text-ink-700">Email</label>
+          <Field label="Email">
             <input
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              className="w-full rounded-xl border border-ink-200 px-4 py-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+              placeholder="you@hospital.com"
+              className={inputCls}
             />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-bold text-ink-700">Password</label>
+          </Field>
+          <Field label="Password">
             <input
               type="password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
-              className="w-full rounded-xl border border-ink-200 px-4 py-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+              className={inputCls}
             />
-          </div>
+          </Field>
           {error && (
-            <p className="rounded-xl bg-red-50 px-4 py-3 text-[13px] font-semibold text-red-700">
-              {error}
-            </p>
+            <InlineBanner tone="error" className="font-semibold">{error}</InlineBanner>
           )}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-full bg-ink-900 py-3.5 text-sm font-bold text-white transition hover:bg-brand-700 disabled:opacity-60"
-          >
+          <Button type="submit" disabled={loading} fullWidth>
             {loading ? "Signing in…" : "Sign in"}
-          </button>
+          </Button>
         </form>
-        <p className="mt-5 text-center text-sm text-ink-500">
-          New to Zeon?{" "}
-          <Link
-            href={`/register${next !== "/account" ? `?next=${encodeURIComponent(next)}` : ""}`}
-            className="font-bold text-brand-700 hover:underline"
-          >
-            Create an account
+        <p className="mt-5 text-center text-sm text-mist-500">
+          New here?{" "}
+          <Link href="/coordinator/setup" className="font-bold text-primary-700 hover:underline">
+            Create a coordinator account
+          </Link>
+        </p>
+        <p className="mt-2 text-center text-xs text-mist-400">
+          A wearer with an invite link? You don&apos;t need an account — just
+          open your link.{" "}
+          <Link href="/track" className="font-bold underline">
+            Or track your order →
           </Link>
         </p>
       </div>

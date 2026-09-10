@@ -32,3 +32,10 @@ next-env.d.ts
 /data/users.json
 /data/orders.json
 /data/enquiries.json
+/data/collections.json
+/data/team-orders.json
+/data/individual-orders.json
+/data/size-profiles.json
+/data/discovery.json
+/data/feedback.json
+/data/events.json

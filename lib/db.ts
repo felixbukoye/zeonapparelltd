@@ -1,7 +1,21 @@
 import { promises as fs } from "fs";
 import path from "path";
 import crypto from "crypto";
-import type { Enquiry, Order, Product, Review, User } from "./types";
+import type {
+  AppEvent,
+  Collection,
+  DiscoverySession,
+  Enquiry,
+  Feedback,
+  IndividualOrder,
+  Order,
+  Product,
+  Review,
+  RosterEntry,
+  SizeProfile,
+  TeamOrder,
+  User,
+} from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 
@@ -136,6 +150,8 @@ export async function createUser(input: {
   email: string;
   password: string;
   phone?: string;
+  orgName?: string;
+  orgType?: string;
 }): Promise<User> {
   const users = await getUsers();
   if (
@@ -154,8 +170,10 @@ export async function createUser(input: {
     email: input.email,
     passwordHash,
     salt,
-    role: "customer",
+    role: "coordinator",
     phone: input.phone,
+    orgName: input.orgName,
+    orgType: input.orgType,
     createdAt: new Date().toISOString(),
   };
   users.push(user);
@@ -165,7 +183,9 @@ export async function createUser(input: {
 
 export async function updateUser(
   id: string,
-  patch: Partial<Pick<User, "name" | "phone" | "address" | "city">>
+  patch: Partial<
+    Pick<User, "name" | "phone" | "address" | "city" | "orgName" | "orgType">
+  >
 ): Promise<User> {
   const users = await getUsers();
   const idx = users.findIndex((u) => u.id === id);
@@ -366,4 +386,397 @@ export async function updateEnquiryStatus(
   enquiries[idx].status = status;
   await writeJson("enquiries.json", enquiries);
   return enquiries[idx];
+}
+
+/* -------------------------------- collections ------------------------------ */
+
+export async function getCollections(): Promise<Collection[]> {
+  return readJson<Collection[]>("collections.json", []);
+}
+
+export async function getCollectionsByCoordinator(
+  coordinatorId: string
+): Promise<Collection[]> {
+  const all = await getCollections();
+  return all
+    .filter((c) => c.coordinatorId === coordinatorId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function getCollectionById(
+  id: string
+): Promise<Collection | undefined> {
+  const all = await getCollections();
+  return all.find((c) => c.id === id);
+}
+
+export async function saveCollection(
+  input: Omit<Collection, "id" | "createdAt" | "version" | "history"> & {
+    id?: string;
+    note?: string;
+  }
+): Promise<Collection> {
+  const all = await getCollections();
+  if (input.id) {
+    const idx = all.findIndex((c) => c.id === input.id);
+    if (idx === -1) throw new Error("Collection not found");
+    const current = all[idx];
+    const bumped =
+      input.status === "for-production" && current.status !== "for-production";
+    const version = bumped ? current.version + 1 : current.version;
+    all[idx] = {
+      ...current,
+      ...input,
+      id: current.id,
+      createdAt: current.createdAt,
+      version,
+      history: bumped
+        ? [
+            ...current.history,
+            {
+              version,
+              at: new Date().toISOString(),
+              note: input.note || "Marked as For Production",
+            },
+          ]
+        : current.history,
+    };
+    await writeJson("collections.json", all);
+    return all[idx];
+  }
+  const now = new Date().toISOString();
+  const collection: Collection = {
+    ...input,
+    id: crypto.randomUUID(),
+    version: 1,
+    history: [{ version: 1, at: now, note: "Collection created" }],
+    createdAt: now,
+  };
+  all.unshift(collection);
+  await writeJson("collections.json", all);
+  return collection;
+}
+
+export async function deleteCollection(id: string): Promise<void> {
+  const all = await getCollections();
+  await writeJson(
+    "collections.json",
+    all.filter((c) => c.id !== id)
+  );
+}
+
+/* -------------------------------- team orders ------------------------------ */
+
+export async function getTeamOrders(): Promise<TeamOrder[]> {
+  return readJson<TeamOrder[]>("team-orders.json", []);
+}
+
+export async function getTeamOrdersByCoordinator(
+  coordinatorId: string
+): Promise<TeamOrder[]> {
+  const all = await getTeamOrders();
+  return all
+    .filter((o) => o.coordinatorId === coordinatorId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function getTeamOrderById(
+  id: string
+): Promise<TeamOrder | undefined> {
+  const all = await getTeamOrders();
+  return all.find((o) => o.id === id);
+}
+
+export async function getTeamOrderByInviteToken(
+  token: string
+): Promise<TeamOrder | undefined> {
+  const all = await getTeamOrders();
+  return all.find((o) => o.inviteToken === token);
+}
+
+export async function getTeamOrderByCode(
+  code: string
+): Promise<TeamOrder | undefined> {
+  const all = await getTeamOrders();
+  return all.find((o) => o.code.toLowerCase() === code.toLowerCase());
+}
+
+function nextTeamCode(existing: TeamOrder[]): string {
+  const year = new Date().getFullYear();
+  return `ZNT-${year}-${String(existing.length + 1).padStart(3, "0")}`;
+}
+
+export function makeInviteToken(): string {
+  return "ZIN-" + crypto.randomBytes(4).toString("hex").toUpperCase();
+}
+
+export function makeProductId(kind: "T" | "D"): string {
+  const year = new Date().getFullYear();
+  return `ZP${kind}-${year}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+}
+
+export async function createTeamOrder(
+  input: Omit<
+    TeamOrder,
+    | "id"
+    | "code"
+    | "productIds"
+    | "inviteToken"
+    | "inviteExpiry"
+    | "roster"
+    | "quote"
+    | "depositPaid"
+    | "balancePaid"
+    | "production"
+    | "status"
+    | "createdAt"
+  > & {
+    roster?: RosterEntry[];
+    inviteDays?: number;
+    perSet?: number;
+  }
+): Promise<TeamOrder> {
+  const all = await getTeamOrders();
+  const now = new Date().toISOString();
+  const expiry = new Date();
+  expiry.setDate(expiry.getDate() + (input.inviteDays ?? 14));
+  const order: TeamOrder = {
+    id: crypto.randomUUID(),
+    code: nextTeamCode(all),
+    productIds: [],
+    collectionId: input.collectionId,
+    coordinatorId: input.coordinatorId,
+    orgName: input.orgName,
+    headcount: input.headcount,
+    departments: input.departments,
+    type: input.type,
+    inviteToken: makeInviteToken(),
+    inviteExpiry: expiry.toISOString(),
+    roster: input.roster ?? [],
+    quote: {
+      perSet: input.perSet ?? 32000,
+      sets: input.headcount,
+      subtotal: (input.perSet ?? 32000) * input.headcount,
+      discount: 0,
+      total: (input.perSet ?? 32000) * input.headcount,
+      depositDue: 0,
+      balance: 0,
+      status: "pending",
+    },
+    depositPaid: false,
+    balancePaid: false,
+    embroidery: input.embroidery,
+    production: {
+      stage: -1,
+      timestamps: [null, null, null, null, null, null, null, null],
+      eta: "",
+    },
+    status: "draft",
+    createdAt: now,
+  };
+  all.unshift(order);
+  await writeJson("team-orders.json", all);
+  return order;
+}
+
+export async function saveTeamOrder(order: TeamOrder): Promise<TeamOrder> {
+  const all = await getTeamOrders();
+  const idx = all.findIndex((o) => o.id === order.id);
+  if (idx === -1) throw new Error("Order not found");
+  all[idx] = order;
+  await writeJson("team-orders.json", all);
+  return order;
+}
+
+export async function submitIntake(
+  token: string,
+  entry: Omit<RosterEntry, "id" | "submitted" | "submittedAt" | "source">
+): Promise<{ order: TeamOrder; entry: RosterEntry; duplicate: boolean }> {
+  const order = await getTeamOrderByInviteToken(token);
+  if (!order) throw new Error("Invite link not found.");
+  if (new Date(order.inviteExpiry).getTime() <= Date.now())
+    throw new Error("This invite link has expired.");
+  const duplicate = order.roster.some(
+    (r) =>
+      r.submitted &&
+      r.name.trim().toLowerCase() === entry.name.trim().toLowerCase()
+  );
+  const full: RosterEntry = {
+    ...entry,
+    id: crypto.randomUUID(),
+    submitted: true,
+    submittedAt: new Date().toISOString(),
+    source: "invite",
+  };
+  order.roster.push(full);
+  if (
+    order.status === "awaiting-submissions" &&
+    order.roster.filter((r) => r.submitted).length >= order.headcount
+  ) {
+    order.status = "awaiting-approval";
+  }
+  await saveTeamOrder(order);
+  return { order, entry: full, duplicate };
+}
+
+/* ---------------------------- individual orders ---------------------------- */
+
+export async function getIndividualOrders(): Promise<IndividualOrder[]> {
+  return readJson<IndividualOrder[]>("individual-orders.json", []);
+}
+
+export async function getIndividualOrderByCode(
+  code: string
+): Promise<IndividualOrder | undefined> {
+  const all = await getIndividualOrders();
+  return all.find((o) => o.code.toLowerCase() === code.toLowerCase());
+}
+
+export async function getIndividualOrdersByEmail(
+  email: string
+): Promise<IndividualOrder[]> {
+  const all = await getIndividualOrders();
+  return all
+    .filter((o) => o.email.toLowerCase() === email.toLowerCase())
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function createIndividualOrder(
+  input: Omit<IndividualOrder, "id" | "code" | "productId" | "createdAt">
+): Promise<IndividualOrder> {
+  const all = await getIndividualOrders();
+  const year = new Date().getFullYear();
+  const order: IndividualOrder = {
+    ...input,
+    id: crypto.randomUUID(),
+    code: `ZND-${year}-${String(all.length + 1).padStart(3, "0")}-${crypto.randomBytes(2).toString("hex").toUpperCase()}`,
+    productId: makeProductId("D"),
+    createdAt: new Date().toISOString(),
+  };
+  all.unshift(order);
+  await writeJson("individual-orders.json", all);
+  return order;
+}
+
+export async function saveIndividualOrder(
+  order: IndividualOrder
+): Promise<IndividualOrder> {
+  const all = await getIndividualOrders();
+  const idx = all.findIndex((o) => o.id === order.id);
+  if (idx === -1) throw new Error("Order not found");
+  all[idx] = order;
+  await writeJson("individual-orders.json", all);
+  return order;
+}
+
+/* ------------------------------- size profiles ----------------------------- */
+
+export async function getSizeProfiles(): Promise<SizeProfile[]> {
+  return readJson<SizeProfile[]>("size-profiles.json", []);
+}
+
+export async function getSizeProfile(
+  identity: string
+): Promise<SizeProfile | undefined> {
+  const all = await getSizeProfiles();
+  return all.find((p) => p.identity.toLowerCase() === identity.toLowerCase());
+}
+
+export async function saveSizeProfile(
+  input: Omit<SizeProfile, "id" | "updatedAt">
+): Promise<SizeProfile> {
+  const all = await getSizeProfiles();
+  const idx = all.findIndex(
+    (p) => p.identity.toLowerCase() === input.identity.toLowerCase()
+  );
+  if (idx !== -1) {
+    all[idx] = { ...all[idx], ...input, updatedAt: new Date().toISOString() };
+    await writeJson("size-profiles.json", all);
+    return all[idx];
+  }
+  const profile: SizeProfile = {
+    ...input,
+    id: crypto.randomUUID(),
+    updatedAt: new Date().toISOString(),
+  };
+  all.push(profile);
+  await writeJson("size-profiles.json", all);
+  return profile;
+}
+
+/* --------------------------------- discovery ------------------------------- */
+
+export async function getDiscoverySessions(): Promise<DiscoverySession[]> {
+  return readJson<DiscoverySession[]>("discovery.json", []);
+}
+
+export async function getDiscoverySession(
+  id: string
+): Promise<DiscoverySession | undefined> {
+  const all = await getDiscoverySessions();
+  return all.find((s) => s.id === id);
+}
+
+export async function createDiscoverySession(
+  input: Partial<DiscoverySession> & { mode: DiscoverySession["mode"] }
+): Promise<DiscoverySession> {
+  const all = await getDiscoverySessions();
+  const session: DiscoverySession = {
+    id: crypto.randomUUID().slice(0, 8),
+    mode: input.mode,
+    name: input.name,
+    contact: input.contact,
+    ambassador: input.ambassador,
+    orderCode: input.orderCode,
+    answers: [],
+    currentSection: 1,
+    completed: false,
+    points: 0,
+    createdAt: new Date().toISOString(),
+  };
+  all.unshift(session);
+  await writeJson("discovery.json", all);
+  return session;
+}
+
+export async function saveDiscoverySession(
+  session: DiscoverySession
+): Promise<DiscoverySession> {
+  const all = await getDiscoverySessions();
+  const idx = all.findIndex((s) => s.id === session.id);
+  if (idx === -1) throw new Error("Session not found");
+  all[idx] = session;
+  await writeJson("discovery.json", all);
+  return session;
+}
+
+/* --------------------------------- feedback -------------------------------- */
+
+export async function getFeedback(): Promise<Feedback[]> {
+  return readJson<Feedback[]>("feedback.json", []);
+}
+
+export async function createFeedback(
+  input: Omit<Feedback, "id" | "createdAt">
+): Promise<Feedback> {
+  const all = await getFeedback();
+  const fb: Feedback = {
+    ...input,
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+  };
+  all.unshift(fb);
+  await writeJson("feedback.json", all);
+  return fb;
+}
+
+/* ---------------------------------- events --------------------------------- */
+
+export async function logEvent(
+  name: string,
+  props?: Record<string, string | number | boolean>
+): Promise<void> {
+  const all = await readJson<AppEvent[]>("events.json", []);
+  all.push({ id: crypto.randomUUID(), name, props, at: new Date().toISOString() });
+  await writeJson("events.json", all.slice(-2000));
 }

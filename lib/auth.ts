@@ -11,7 +11,7 @@ const SECRET =
 
 interface SessionPayload {
   uid: string;
-  role: "customer" | "admin";
+  role: "coordinator" | "admin";
   exp: number;
 }
 
@@ -21,7 +21,7 @@ function sign(payload: string): string {
 
 export function createSessionToken(
   userId: string,
-  role: "customer" | "admin"
+  role: "coordinator" | "admin"
 ): string {
   const payload: SessionPayload = {
     uid: userId,
@@ -53,9 +53,7 @@ export function parseSessionToken(token: string): SessionPayload | null {
   }
 }
 
-export async function getSession(): Promise<
-  (SafeUserShim & { role: "customer" | "admin" }) | null
-> {
+export async function getSession(): Promise<SafeUserShim | null> {
   const jar = await cookies();
   const token = jar.get(COOKIE_NAME)?.value;
   if (!token) return null;
@@ -71,6 +69,8 @@ export async function getSession(): Promise<
     phone: user.phone,
     address: user.address,
     city: user.city,
+    orgName: user.orgName,
+    orgType: user.orgType,
     createdAt: user.createdAt,
   };
 }

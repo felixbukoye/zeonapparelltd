@@ -1,17 +1,19 @@
 import type { Metadata } from "next";
+import "@fontsource-variable/inter";
+import "@fontsource-variable/manrope";
 import "./globals.css";
-import { StoreProvider } from "@/context/StoreContext";
+import { AppProvider } from "@/context/AppContext";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
-import CartDrawer from "@/components/CartDrawer";
+import { OfflineWatcher, Toaster, WhatsAppFloat } from "@/components/ui";
 
 export const metadata: Metadata = {
   title: {
-    default: "Zeon Apparel Ltd — Healthcare Apparel for Healthcare Professionals",
-    template: "%s | Zeon Apparel Ltd",
+    default: "ZEON Healthcare Apparels — Fitted, Made-to-Order Workwear",
+    template: "%s | ZEON Healthcare Apparels",
   },
   description:
-    "Premium scrubs, lab coats, theatre wear and nursing footwear — designed and tailored in Lagos, Nigeria. Retail and wholesale for hospitals & clinics.",
+    "Made-to-order scrubs, lab coats and theatre wear for Nigerian healthcare professionals. Outfit your team or shop as an individual — fitted, never boxy.",
 };
 
 export default function RootLayout({
@@ -22,12 +24,14 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="flex min-h-screen flex-col">
-        <StoreProvider>
+        <AppProvider>
           <Header />
           <main className="flex-1">{children}</main>
           <Footer />
-          <CartDrawer />
-        </StoreProvider>
+          <WhatsAppFloat />
+          <OfflineWatcher />
+          <Toaster />
+        </AppProvider>
       </body>
     </html>
   );

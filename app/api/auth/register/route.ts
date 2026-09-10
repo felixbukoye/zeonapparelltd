@@ -4,7 +4,7 @@ import { createSessionToken, COOKIE_NAME } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   try {
-    const { name, email, password, phone } = await req.json();
+    const { name, email, password, phone, orgName, orgType } = await req.json();
     if (!name?.trim() || !email?.trim() || !password) {
       return NextResponse.json(
         { error: "Name, email and password are required." },
@@ -28,6 +28,8 @@ export async function POST(req: NextRequest) {
       email: email.trim(),
       password,
       phone: phone?.trim(),
+      orgName: orgName?.trim(),
+      orgType: orgType?.trim(),
     });
     const token = createSessionToken(user.id, user.role);
     const res = NextResponse.json({

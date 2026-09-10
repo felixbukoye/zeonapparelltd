@@ -11,8 +11,15 @@ export async function GET(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const user = await sessionFromRequest(req);
   if (!user) return json({ error: "Not signed in." }, 401);
-  const { name, phone, address, city } = await req.json();
-  const updated = await updateUser(user.id, { name, phone, address, city });
+  const { name, phone, address, city, orgName, orgType } = await req.json();
+  const updated = await updateUser(user.id, {
+    name,
+    phone,
+    address,
+    city,
+    orgName,
+    orgType,
+  });
   const { passwordHash: _ph, salt: _s, ...safe } = updated;
   return NextResponse.json({ user: safe });
 }

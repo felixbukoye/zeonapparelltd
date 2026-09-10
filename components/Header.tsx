@@ -2,210 +2,156 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useStore } from "@/context/StoreContext";
-import { CATEGORIES } from "@/lib/format";
-import {
-  CartIcon,
-  ChevronDownIcon,
-  CloseIcon,
-  HeartIcon,
-  MenuIcon,
-  SearchIcon,
-  UserIcon,
-} from "./icons";
+import { usePathname } from "next/navigation";
+import { useApp } from "@/context/AppContext";
+import { CloseIcon, MenuIcon, UserIcon, WhatsAppIcon } from "./icons";
+import { WHATSAPP_NUMBER } from "@/lib/format";
 
 const NAV = [
-  { href: "/shop", label: "Shop" },
-  { href: "/wholesale", label: "Wholesale" },
-  { href: "/size-guide", label: "Size Guide" },
-  { href: "/about", label: "About" },
-  { href: "/contact", label: "Contact" },
+  { href: "/catalogue", label: "Catalogue" },
+  { href: "/coordinator", label: "Outfit your team" },
+  { href: "/track", label: "Track order" },
+  { href: "/discovery", label: "Discovery" },
+  { href: "/about", label: "Community" },
 ];
 
-export default function Header() {
-  const { cartCount, wishlist, user, setCartOpen } = useStore();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const pathname = usePathname();
-  const router = useRouter();
+export function Logo({ dark }: { dark?: boolean }) {
+  return (
+    <span className="flex items-center gap-2.5">
+      <span
+        className={`flex h-10 w-10 items-center justify-center rounded-xl font-display text-xl font-black ${
+          dark ? "bg-gold-500 text-navy-950" : "bg-navy-900 text-white"
+        }`}
+      >
+        Z
+      </span>
+      <span className="leading-tight">
+        <span
+          className={`block font-display text-xl font-black tracking-tight ${dark ? "text-white" : "text-navy-900"}`}
+        >
+          ZEON
+        </span>
+        <span
+          className={`block text-[10px] font-bold uppercase tracking-[0.22em] ${dark ? "text-gold-400" : "text-primary-600"}`}
+        >
+          Healthcare Apparels
+        </span>
+      </span>
+    </span>
+  );
+}
 
-  function submitSearch(e: React.FormEvent) {
-    e.preventDefault();
-    setSearchOpen(false);
-    router.push(`/shop?q=${encodeURIComponent(query.trim())}`);
-  }
+export default function Header() {
+  const { user } = useApp();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const pathname = usePathname();
+  const onDarkHero = pathname === "/";
 
   return (
     <header className="sticky top-0 z-40">
-      <div className="bg-ink-900 text-white">
-        <p className="mx-auto max-w-7xl px-4 py-2 text-center text-xs font-medium tracking-wide sm:text-[13px]">
-          Free nationwide delivery on orders over ₦200,000 · Hospitals &amp;
-          clinics:{" "}
-          <Link href="/wholesale" className="underline underline-offset-2 hover:text-brand-200">
-            wholesale programme
-          </Link>
+      <div className="bg-navy-950 text-white">
+        <p className="mx-auto max-w-[1200px] px-4 py-2 text-center text-xs font-medium tracking-wide sm:text-[13px]">
+          Made-to-order in Lagos · Free size exchanges ·{" "}
+          <a
+            href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent("Hello ZEON! I have a question 🙏")}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-bold text-gold-300 underline underline-offset-2 hover:text-gold-200"
+          >
+            Chat with us on WhatsApp
+          </a>
         </p>
       </div>
 
-      <div className="border-b border-ink-100 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3.5 sm:gap-6">
+      <div
+        className={`border-b backdrop-blur ${
+          onDarkHero
+            ? "border-white/10 bg-navy-950/90"
+            : "border-line bg-white/95"
+        }`}
+      >
+        <div className="mx-auto flex max-w-[1200px] items-center gap-3 px-4 py-3">
           <button
-            className="rounded-lg p-2 text-ink-700 hover:bg-ink-50 lg:hidden"
+            className={`rounded-xl p-2.5 lg:hidden ${onDarkHero ? "text-white hover:bg-white/10" : "text-navy-900 hover:bg-paper"}`}
             onClick={() => setMenuOpen(true)}
             aria-label="Open menu"
           >
             <MenuIcon />
           </button>
 
-          <Link href="/" className="flex items-center gap-2.5">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-600 font-black text-white shadow-sm">
-              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 4v16M5 8.5h14" />
-                <path d="M7 20.5h10" strokeWidth={2} />
-              </svg>
-            </span>
-            <span className="leading-tight">
-              <span className="block text-xl font-black tracking-tight text-ink-900">
-                ZEON
-              </span>
-              <span className="block text-[10px] font-bold uppercase tracking-[0.22em] text-brand-600">
-                Apparel Ltd
-              </span>
-            </span>
+          <Link href="/" aria-label="ZEON home">
+            <Logo dark={onDarkHero} />
           </Link>
 
-          <nav className="ml-4 hidden items-center gap-1 lg:flex">
-            <div className="group relative">
-              <Link
-                href="/shop"
-                className={`flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-semibold transition hover:bg-ink-50 ${
-                  pathname?.startsWith("/shop") || pathname?.startsWith("/product")
-                    ? "text-brand-700"
-                    : "text-ink-700"
-                }`}
-              >
-                Shop <ChevronDownIcon className="h-4 w-4" />
-              </Link>
-              <div className="invisible absolute left-0 top-full w-56 translate-y-1 rounded-2xl border border-ink-100 bg-white p-2 opacity-0 shadow-xl transition-all group-hover:visible group-hover:translate-y-0 group-hover:opacity-100">
+          <nav className="ml-6 hidden items-center gap-1 lg:flex">
+            {NAV.map((item) => {
+              const active =
+                pathname === item.href ||
+                (item.href !== "/" && pathname?.startsWith(item.href));
+              return (
                 <Link
-                  href="/shop"
-                  className="block rounded-xl px-3 py-2 text-sm font-semibold text-ink-800 hover:bg-brand-50 hover:text-brand-700"
+                  key={item.href}
+                  href={item.href}
+                  className={`rounded-xl px-3.5 py-2.5 text-sm font-semibold transition ${
+                    active
+                      ? onDarkHero
+                        ? "bg-white/10 text-gold-300"
+                        : "bg-primary-50 text-primary-700"
+                      : onDarkHero
+                        ? "text-white/80 hover:bg-white/5 hover:text-white"
+                        : "text-navy-700 hover:bg-paper"
+                  }`}
                 >
-                  All products
+                  {item.label}
                 </Link>
-                {CATEGORIES.map((c) => (
-                  <Link
-                    key={c}
-                    href={`/shop?category=${encodeURIComponent(c)}`}
-                    className="block rounded-xl px-3 py-2 text-sm text-ink-600 hover:bg-brand-50 hover:text-brand-700"
-                  >
-                    {c}
-                  </Link>
-                ))}
-              </div>
-            </div>
-            {NAV.slice(1).map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`rounded-lg px-3 py-2 text-sm font-semibold transition hover:bg-ink-50 ${
-                  pathname === item.href ? "text-brand-700" : "text-ink-700"
-                }`}
-              >
-                {item.label}
-              </Link>
-            ))}
+              );
+            })}
           </nav>
 
-          <div className="ml-auto flex items-center gap-1 sm:gap-2">
-            <button
-              onClick={() => setSearchOpen((v) => !v)}
-              aria-label="Search"
-              className="rounded-full p-2.5 text-ink-700 transition hover:bg-ink-50 hover:text-brand-700"
-            >
-              <SearchIcon />
-            </button>
+          <div className="ml-auto flex items-center gap-2">
             <Link
-              href="/wishlist"
-              aria-label="Wishlist"
-              className="relative rounded-full p-2.5 text-ink-700 transition hover:bg-ink-50 hover:text-brand-700"
+              href={user ? "/coordinator/account" : "/login"}
+              className={`hidden items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition sm:inline-flex ${
+                onDarkHero
+                  ? "text-white/85 hover:bg-white/10 hover:text-white"
+                  : "text-navy-800 hover:bg-paper"
+              }`}
             >
-              <HeartIcon />
-              {wishlist.length > 0 && (
-                <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
-                  {wishlist.length}
-                </span>
-              )}
+              <UserIcon className="h-4.5 w-4.5" />
+              {user ? user.name.split(" ")[0] : "Sign in"}
             </Link>
             <Link
-              href={user ? "/account" : "/login"}
-              aria-label="Account"
-              className="hidden rounded-full p-2.5 text-ink-700 transition hover:bg-ink-50 hover:text-brand-700 sm:block"
+              href="/catalogue"
+              className={`rounded-xl px-5 py-2.5 text-sm font-bold transition ${
+                onDarkHero
+                  ? "bg-gold-500 text-navy-950 hover:bg-gold-400"
+                  : "bg-primary-600 text-white hover:bg-primary-700"
+              }`}
             >
-              <UserIcon />
+              Shop as an individual
             </Link>
-            <button
-              onClick={() => setCartOpen(true)}
-              aria-label="Open cart"
-              className="relative flex items-center gap-2 rounded-full bg-ink-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700"
-            >
-              <CartIcon className="h-4.5 w-4.5" />
-              <span className="hidden sm:inline">Cart</span>
-              {cartCount > 0 && (
-                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1 text-[11px] font-bold text-ink-900">
-                  {cartCount}
-                </span>
-              )}
-            </button>
           </div>
         </div>
-
-        {searchOpen && (
-          <div className="border-t border-ink-100 bg-white">
-            <form
-              onSubmit={submitSearch}
-              className="mx-auto flex max-w-7xl items-center gap-2 px-4 py-3"
-            >
-              <SearchIcon className="h-5 w-5 text-ink-400" />
-              <input
-                autoFocus
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search scrubs, lab coats, clogs…"
-                className="w-full bg-transparent text-sm outline-none placeholder:text-ink-400"
-              />
-              <button
-                type="submit"
-                className="rounded-full bg-brand-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-700"
-              >
-                Search
-              </button>
-            </form>
-          </div>
-        )}
       </div>
 
-      {/* Mobile drawer */}
       {menuOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div
-            className="animate-overlay-in absolute inset-0 bg-ink-950/50"
+            className="animate-overlay-in absolute inset-0 bg-navy-950/60"
             onClick={() => setMenuOpen(false)}
           />
-          <div className="animate-drawer-in absolute left-0 top-0 flex h-full w-80 max-w-[85vw] flex-col bg-white shadow-2xl" style={{ animationName: "drawer-in", transform: "scaleX(-1)" }}>
-            <div className="flex items-center justify-between border-b border-ink-100 px-5 py-4" style={{ transform: "scaleX(-1)" }}>
-              <span className="text-lg font-black text-ink-900">ZEON <span className="text-brand-600">Apparel</span></span>
+          <div className="animate-sheet-up absolute inset-x-4 top-4 rounded-2xl bg-white p-4 shadow-2xl">
+            <div className="flex items-center justify-between px-2 py-1">
+              <Logo />
               <button
                 onClick={() => setMenuOpen(false)}
                 aria-label="Close menu"
-                className="rounded-lg p-2 text-ink-600 hover:bg-ink-50"
+                className="rounded-xl p-2.5 text-navy-800 hover:bg-paper"
               >
                 <CloseIcon />
               </button>
             </div>
-            <nav className="flex flex-col gap-1 overflow-y-auto p-4" style={{ transform: "scaleX(-1)" }}>
+            <nav className="mt-2 flex flex-col gap-1">
               {[{ href: "/", label: "Home" }, ...NAV].map((item) => (
                 <Link
                   key={item.href}
@@ -213,32 +159,29 @@ export default function Header() {
                   onClick={() => setMenuOpen(false)}
                   className={`rounded-xl px-4 py-3 text-[15px] font-semibold ${
                     pathname === item.href
-                      ? "bg-brand-50 text-brand-700"
-                      : "text-ink-700 hover:bg-ink-50"
+                      ? "bg-primary-50 text-primary-700"
+                      : "text-navy-800 hover:bg-paper"
                   }`}
                 >
                   {item.label}
                 </Link>
               ))}
               <Link
-                href={user ? "/account" : "/login"}
+                href={user ? "/coordinator/account" : "/login"}
                 onClick={() => setMenuOpen(false)}
-                className="rounded-xl px-4 py-3 text-[15px] font-semibold text-ink-700 hover:bg-ink-50"
+                className="rounded-xl px-4 py-3 text-[15px] font-semibold text-navy-800 hover:bg-paper"
               >
-                {user ? `Hi, ${user.name.split(" ")[0]} — My Account` : "Sign in / Register"}
+                {user ? `Hi, ${user.name.split(" ")[0]} — My account` : "Sign in / Create account"}
               </Link>
-              <Link
-                href="/track"
-                onClick={() => setMenuOpen(false)}
-                className="rounded-xl px-4 py-3 text-[15px] font-semibold text-ink-700 hover:bg-ink-50"
+              <a
+                href={`https://wa.me/${WHATSAPP_NUMBER}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-whatsapp px-4 py-3 text-[15px] font-bold text-white"
               >
-                Track my order
-              </Link>
+                <WhatsAppIcon className="h-5 w-5" /> Talk to Sales
+              </a>
             </nav>
-            <div className="mt-auto border-t border-ink-100 p-4" style={{ transform: "scaleX(-1)" }}>
-              <p className="text-xs text-ink-500">Need help? Call us</p>
-              <p className="text-sm font-bold text-ink-900">+234 801 234 5678</p>
-            </div>
           </div>
         </div>
       )}
