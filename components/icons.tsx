@@ -348,3 +348,68 @@ export function PointsIcon({ className }: IconProps) {
     </Svg>
   );
 }
+
+export function BellIcon({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <path d="M6 9.5a6 6 0 0 1 12 0c0 4 1.5 5.5 2.5 6.5h-17C4.5 15 6 13.5 6 9.5Z" />
+      <path d="M10 19.5a2.2 2.2 0 0 0 4 0" />
+    </Svg>
+  );
+}
+
+export function SlidersIcon({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <path d="M4 7h9m4 0h3M4 17h3m4 0h9" />
+      <circle cx="16" cy="7" r="2.5" />
+      <circle cx="10" cy="17" r="2.5" />
+    </Svg>
+  );
+}
+
+export function DotsIcon({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <path d="M5 12h.01M12 12h.01M19 12h.01" strokeWidth={2.6} />
+    </Svg>
+  );
+}
+
+export function CalendarIcon({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
+      <path d="M3.5 9.5h17M8 3v3.5M16 3v3.5" />
+    </Svg>
+  );
+}
+
+export function QrIcon({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <rect x="4" y="4" width="7" height="7" rx="1.5" />
+      <rect x="13" y="4" width="7" height="7" rx="1.5" />
+      <rect x="4" y="13" width="7" height="7" rx="1.5" />
+      <path d="M13 13h3v3h-3zM18.5 13v.01M13 18.5h.01M16 18.5h4V20" />
+    </Svg>
+  );
+}
+
+export function TrendUpIcon({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <path d="m3.5 17 5.5-5.5 3.5 3.5 7.5-7.5" />
+      <path d="M14.5 7.5H20V13" />
+    </Svg>
+  );
+}
+
+export function ChartIcon({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <path d="M4 4v16h16" />
+      <path d="M8.5 15.5v-4m4.5 4V8m4.5 7.5v-2.5" />
+    </Svg>
+  );
+}

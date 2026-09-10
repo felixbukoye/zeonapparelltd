@@ -12,7 +12,7 @@ export default function CataloguePage() {
   return (
     <Suspense
       fallback={
-        <div className="bg-navy-950 py-20 text-center text-sm text-white/60">
+        <div className="bg-paper py-20 text-center text-sm text-mist-500">
           Loading the style board…
         </div>
       }
